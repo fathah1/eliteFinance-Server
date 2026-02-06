@@ -1,0 +1,21 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Customer extends Model
+{
+    protected $fillable = [
+        'user_id',
+        'name',
+        'phone',
+        'opening_balance',
+        'is_archived',
+    ];
+
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class);
+    }
+}

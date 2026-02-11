@@ -4,12 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class Transaction extends Model
+class SupplierTransaction extends Model
 {
     protected $fillable = [
         'user_id',
         'business_id',
-        'customer_id',
+        'supplier_id',
         'amount',
         'type',
         'note',
@@ -22,9 +22,9 @@ class Transaction extends Model
         'synced' => 'boolean',
     ];
 
-    public function customer()
+    public function supplier()
     {
-        return $this->belongsTo(Customer::class);
+        return $this->belongsTo(Supplier::class);
     }
 
     public function business()

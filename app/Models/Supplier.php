@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class Customer extends Model
+class Supplier extends Model
 {
     protected $fillable = [
         'user_id',
@@ -15,13 +15,13 @@ class Customer extends Model
         'is_archived',
     ];
 
-    public function transactions()
-    {
-        return $this->hasMany(Transaction::class);
-    }
-
     public function business()
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function transactions()
+    {
+        return $this->hasMany(SupplierTransaction::class);
     }
 }

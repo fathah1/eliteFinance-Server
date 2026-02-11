@@ -3,29 +3,30 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Customer;
-use App\Models\Transaction;
+use App\Models\Business;
+use App\Models\Supplier;
+use App\Models\SupplierTransaction;
 use Illuminate\Http\Request;
 
-class TransactionController extends Controller
+class SupplierTransactionController extends Controller
 {
     public function indexAll(Request $request)
     {
         $businessId = $request->query('business_id');
 
-        return Transaction::where('user_id', $request->user()->id)
+        return SupplierTransaction::where('user_id', $request->user()->id)
             ->when($businessId, fn($q) => $q->where('business_id', $businessId))
             ->orderBy('created_at', 'desc')
             ->get();
     }
 
-    public function index(Request $request, Customer $customer)
+    public function index(Request $request, Supplier $supplier)
     {
-        if ($customer->user_id !== $request->user()->id) {
+        if ($supplier->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
-        return Transaction::where('customer_id', $customer->id)
+        return SupplierTransaction::where('supplier_id', $supplier->id)
             ->orderBy('created_at', 'desc')
             ->get();
     }
@@ -34,7 +35,7 @@ class TransactionController extends Controller
     {
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
-            'customer_id' => ['required', 'integer', 'exists:customers,id'],
+            'supplier_id' => ['required', 'integer', 'exists:suppliers,id'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'type' => ['required', 'in:CREDIT,DEBIT'],
             'note' => ['nullable', 'string'],
@@ -43,11 +44,17 @@ class TransactionController extends Controller
             'attachment' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:5120'],
         ]);
 
-        $customer = Customer::where('id', $data['customer_id'])
+        $business = Business::where('id', $data['business_id'])
             ->where('user_id', $request->user()->id)
             ->first();
+        if (!$business) {
+            return response()->json(['message' => 'Not found'], 404);
+        }
 
-        if (!$customer) {
+        $supplier = Supplier::where('id', $data['supplier_id'])
+            ->where('user_id', $request->user()->id)
+            ->first();
+        if (!$supplier) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -56,10 +63,10 @@ class TransactionController extends Controller
             $attachmentPath = $request->file('attachment')->store('attachments', 'public');
         }
 
-        $transaction = Transaction::create([
+        $transaction = SupplierTransaction::create([
             'user_id' => $request->user()->id,
             'business_id' => $data['business_id'],
-            'customer_id' => $data['customer_id'],
+            'supplier_id' => $data['supplier_id'],
             'amount' => $data['amount'],
             'type' => $data['type'],
             'note' => $data['note'] ?? null,
@@ -71,9 +78,9 @@ class TransactionController extends Controller
         return response()->json($transaction, 201);
     }
 
-    public function update(Request $request, Transaction $transaction)
+    public function update(Request $request, SupplierTransaction $supplierTransaction)
     {
-        if ($transaction->user_id !== $request->user()->id) {
+        if ($supplierTransaction->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -86,30 +93,30 @@ class TransactionController extends Controller
             'attachment' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:5120'],
         ]);
 
-        $attachmentPath = $transaction->attachment_path;
+        $attachmentPath = $supplierTransaction->attachment_path;
         if ($request->hasFile('attachment')) {
             $attachmentPath = $request->file('attachment')->store('attachments', 'public');
         }
 
-        $transaction->update([
+        $supplierTransaction->update([
             'amount' => $data['amount'],
             'type' => $data['type'],
             'note' => $data['note'] ?? null,
             'attachment_path' => $attachmentPath,
-            'synced' => $data['synced'] ?? $transaction->synced,
-            'created_at' => $data['created_at'] ?? $transaction->created_at,
+            'synced' => $data['synced'] ?? $supplierTransaction->synced,
+            'created_at' => $data['created_at'] ?? $supplierTransaction->created_at,
         ]);
 
-        return response()->json($transaction);
+        return response()->json($supplierTransaction);
     }
 
-    public function destroy(Request $request, Transaction $transaction)
+    public function destroy(Request $request, SupplierTransaction $supplierTransaction)
     {
-        if ($transaction->user_id !== $request->user()->id) {
+        if ($supplierTransaction->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
-        $transaction->delete();
+        $supplierTransaction->delete();
         return response()->json(['message' => 'Deleted']);
     }
 }

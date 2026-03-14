@@ -3,20 +3,18 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasDelStatus;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Business extends Model
+class ExpenseCatalogItem extends Model
 {
-    use HasDelStatus;
+    use HasFactory, HasDelStatus;
 
     protected $fillable = [
         'user_id',
+        'business_id',
         'name',
+        'rate',
         'del_status',
     ];
-
-    public function user()
-    {
-        return $this->belongsTo(User::class);
-    }
 }

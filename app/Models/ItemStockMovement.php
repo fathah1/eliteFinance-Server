@@ -15,6 +15,8 @@ class ItemStockMovement extends Model
         'item_id',
         'sale_id',
         'sale_bill_number',
+        'purchase_id',
+        'purchase_number',
         'type',
         'quantity',
         'price',

@@ -6,17 +6,11 @@ use App\Models\Concerns\HasDelStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class SaleItem extends Model
+class ExpenseCategory extends Model
 {
     use HasFactory, HasDelStatus;
 
     protected $fillable = [
-        'sale_id',
-        'item_id',
-        'name',
-        'qty',
-        'price',
-        'line_total',
-        'del_status',
+        'user_id', 'business_id', 'name', 'del_status',
     ];
 }

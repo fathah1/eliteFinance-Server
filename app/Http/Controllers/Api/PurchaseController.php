@@ -3,29 +3,29 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Customer;
 use App\Models\Item;
 use App\Models\ItemStockMovement;
-use App\Models\Sale;
-use App\Models\SaleItem;
-use App\Models\SaleReturn;
-use App\Models\SaleReturnItem;
-use App\Models\Transaction;
+use App\Models\Purchase;
+use App\Models\PurchaseItem;
+use App\Models\PurchaseReturn;
+use App\Models\PurchaseReturnItem;
+use App\Models\Supplier;
+use App\Models\SupplierTransaction;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-class SaleController extends Controller
+class PurchaseController extends Controller
 {
     public function index(Request $request)
     {
-        $this->authorizeFeature($request, 'sale', 'view');
+        $this->authorizeFeature($request, 'purchase', 'view');
         $businessId = $request->query('business_id');
         if ($businessId) {
             $this->assertBusinessAccess($request, (int) $businessId);
         }
 
-        return Sale::with('items')
+        return Purchase::with('items')
             ->where('user_id', $this->ownerUserId($request))
             ->when($businessId, fn ($q) => $q->where('business_id', $businessId))
             ->orderBy('date', 'desc')
@@ -35,13 +35,13 @@ class SaleController extends Controller
 
     public function returnIndex(Request $request)
     {
-        $this->authorizeFeature($request, 'sale', 'view');
+        $this->authorizeFeature($request, 'purchase', 'view');
         $businessId = $request->query('business_id');
         if ($businessId) {
             $this->assertBusinessAccess($request, (int) $businessId);
         }
 
-        return SaleReturn::with('items')
+        return PurchaseReturn::with('items')
             ->where('user_id', $this->ownerUserId($request))
             ->when($businessId, fn ($q) => $q->where('business_id', $businessId))
             ->orderBy('date', 'desc')
@@ -51,17 +51,17 @@ class SaleController extends Controller
 
     public function store(Request $request)
     {
-        $this->authorizeFeature($request, 'sale', 'add');
+        $this->authorizeFeature($request, 'purchase', 'add');
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
-            'bill_number' => ['required', 'integer', 'min:1'],
+            'purchase_number' => ['required', 'integer', 'min:1'],
             'date' => ['required', 'date'],
-            'customer_id' => ['nullable', 'integer', 'exists:customers,id'],
+            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
             'party_name' => ['nullable', 'string', 'max:255'],
             'party_phone' => ['nullable', 'string', 'max:50'],
             'payment_mode' => ['required', 'string', 'in:unpaid,cash,card'],
             'due_date' => ['nullable', 'date'],
-            'received_amount' => ['nullable', 'numeric', 'min:0'],
+            'paid_amount' => ['nullable', 'numeric', 'min:0'],
             'payment_reference' => ['nullable', 'string', 'max:255'],
             'private_notes' => ['nullable', 'string'],
             'manual_amount' => ['nullable', 'numeric', 'min:0'],
@@ -83,12 +83,12 @@ class SaleController extends Controller
             return response()->json(['message' => 'Either line items or amount is required'], 422);
         }
 
-        if (!empty($data['customer_id'])) {
-            $customerExists = Customer::where('id', $data['customer_id'])
+        if (!empty($data['supplier_id'])) {
+            $exists = Supplier::where('id', $data['supplier_id'])
                 ->where('user_id', $this->ownerUserId($request))
                 ->exists();
-            if (!$customerExists) {
-                return response()->json(['message' => 'Invalid customer'], 422);
+            if (!$exists) {
+                return response()->json(['message' => 'Invalid supplier'], 422);
             }
         }
 
@@ -107,23 +107,23 @@ class SaleController extends Controller
             $total = max(0, $beforeDiscount - $discountAmount);
             $vatAmount = $this->vatFromGrossAmount($total);
 
-            $receivedInput = (float)($data['received_amount'] ?? 0);
-            $received = $data['payment_mode'] === 'unpaid' ? 0 : max(0, min($receivedInput, $total));
-            $balanceDue = max(0, $total - $received);
+            $paidInput = (float)($data['paid_amount'] ?? 0);
+            $paid = $data['payment_mode'] === 'unpaid' ? 0 : max(0, min($paidInput, $total));
+            $balanceDue = max(0, $total - $paid);
             $paymentStatus = $balanceDue > 0 ? 'unpaid' : 'fully_paid';
 
             $photos = [];
             if ($request->hasFile('note_photos')) {
                 foreach ($request->file('note_photos') as $photo) {
-                    $photos[] = $photo->store('sales_notes', 'public');
+                    $photos[] = $photo->store('purchase_notes', 'public');
                 }
             }
 
-            $sale = Sale::create([
+            $purchase = Purchase::create([
                 'user_id' => $this->ownerUserId($request),
                 'business_id' => $data['business_id'],
-                'customer_id' => $data['customer_id'] ?? null,
-                'bill_number' => $data['bill_number'],
+                'supplier_id' => $data['supplier_id'] ?? null,
+                'purchase_number' => $data['purchase_number'],
                 'date' => $data['date'],
                 'party_name' => $data['party_name'] ?? null,
                 'party_phone' => $data['party_phone'] ?? null,
@@ -137,7 +137,7 @@ class SaleController extends Controller
                 'total_amount' => $total,
                 'vat_amount' => $vatAmount,
                 'payment_mode' => $data['payment_mode'],
-                'received_amount' => $received,
+                'paid_amount' => $paid,
                 'balance_due' => $balanceDue,
                 'payment_status' => $paymentStatus,
                 'due_date' => $data['due_date'] ?? null,
@@ -155,8 +155,8 @@ class SaleController extends Controller
                     continue;
                 }
 
-                SaleItem::create([
-                    'sale_id' => $sale->id,
+                PurchaseItem::create([
+                    'purchase_id' => $purchase->id,
                     'item_id' => $itemId,
                     'name' => $name,
                     'qty' => $qty,
@@ -171,52 +171,69 @@ class SaleController extends Controller
                         ->first();
 
                     if ($item) {
-                        $item->current_stock = $item->current_stock - $qty;
+                        $item->current_stock = $item->current_stock + $qty;
+                        if ($price > 0) {
+                            $item->purchase_price = $price;
+                        }
                         $item->save();
 
                         ItemStockMovement::create([
                             'user_id' => $this->ownerUserId($request),
                             'business_id' => $item->business_id,
                             'item_id' => $item->id,
-                            'sale_id' => $sale->id,
-                            'sale_bill_number' => $sale->bill_number,
-                            'type' => 'out',
+                            'purchase_id' => $purchase->id,
+                            'purchase_number' => $purchase->purchase_number,
+                            'type' => 'in',
                             'quantity' => $qty,
                             'price' => $price,
-                            'date' => $sale->date,
-                            'note' => 'Sale Bill #'.$sale->bill_number,
+                            'date' => $purchase->date,
+                            'note' => 'Purchase #'.$purchase->purchase_number,
                         ]);
                     }
                 }
             }
 
-            if (!empty($data['customer_id']) && $balanceDue > 0) {
-                $createdAt = $this->withTime($sale->date);
-                Transaction::create([
+            if (!empty($data['supplier_id'])) {
+                $createdAt = $this->withTime($purchase->date);
+                SupplierTransaction::create([
                     'user_id' => $this->ownerUserId($request),
                     'business_id' => $data['business_id'],
-                    'customer_id' => $data['customer_id'],
-                    'amount' => $balanceDue,
-                    'type' => 'CREDIT',
-                    'note' => 'Sale Bill #'.$sale->bill_number,
+                    'supplier_id' => $data['supplier_id'],
+                    'amount' => $total,
+                    'type' => 'DEBIT',
+                    'note' => 'Purchase #'.$purchase->purchase_number,
                     'synced' => true,
                     'created_at' => $createdAt,
                 ]);
+
+                if ($paid > 0) {
+                    $createdAtPaid = $this->withTime($purchase->date);
+                    SupplierTransaction::create([
+                        'user_id' => $this->ownerUserId($request),
+                        'business_id' => $data['business_id'],
+                        'supplier_id' => $data['supplier_id'],
+                        'amount' => $paid,
+                        'type' => 'CREDIT',
+                        'note' => 'Payment Out #'.$purchase->purchase_number,
+                        'synced' => true,
+                        'created_at' => $createdAtPaid,
+                    ]);
+                }
             }
 
-            return response()->json($sale->load('items'), 201);
+            return response()->json($purchase->load('items'), 201);
         });
     }
 
     public function storeReturn(Request $request)
     {
-        $this->authorizeFeature($request, 'sale', 'edit');
+        $this->authorizeFeature($request, 'purchase', 'edit');
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
             'return_number' => ['required', 'integer', 'min:1'],
             'date' => ['required', 'date'],
-            'sale_id' => ['nullable', 'integer', 'exists:sales,id'],
-            'customer_id' => ['nullable', 'integer', 'exists:customers,id'],
+            'purchase_id' => ['nullable', 'integer', 'exists:purchases,id'],
+            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
             'settlement_mode' => ['required', 'string', 'in:credit_party,cash,card'],
             'manual_amount' => ['nullable', 'numeric', 'min:0'],
             'items' => ['nullable', 'array'],
@@ -229,25 +246,25 @@ class SaleController extends Controller
         $this->assertBusinessAccess($request, (int) $data['business_id']);
 
         return DB::transaction(function () use ($request, $data) {
-            $sale = null;
-            if (!empty($data['sale_id'])) {
-                $sale = Sale::with('items')
-                    ->where('id', $data['sale_id'])
+            $purchase = null;
+            if (!empty($data['purchase_id'])) {
+                $purchase = Purchase::with('items')
+                    ->where('id', $data['purchase_id'])
                     ->where('user_id', $this->ownerUserId($request))
                     ->where('business_id', $data['business_id'])
                     ->lockForUpdate()
                     ->first();
 
-                if (!$sale) {
-                    return response()->json(['message' => 'Sale not found'], 404);
+                if (!$purchase) {
+                    return response()->json(['message' => 'Purchase not found'], 404);
                 }
             }
 
-            $customerId = $data['customer_id'] ?? $sale?->customer_id;
+            $supplierId = $data['supplier_id'] ?? $purchase?->supplier_id;
             $items = collect($data['items'] ?? []);
 
-            if ($items->isEmpty() && $sale && $sale->items->isNotEmpty()) {
-                $items = $sale->items->map(function (SaleItem $it) {
+            if ($items->isEmpty() && $purchase && $purchase->items->isNotEmpty()) {
+                $items = $purchase->items->map(function (PurchaseItem $it) {
                     return [
                         'item_id' => $it->item_id,
                         'name' => $it->name,
@@ -268,21 +285,21 @@ class SaleController extends Controller
             }
 
             $modeText = match ($data['settlement_mode']) {
-                'credit_party' => 'Credit to party',
-                'cash' => 'Refund (cash)',
-                default => 'Refund (card)',
+                'credit_party' => 'Credit from supplier',
+                'cash' => 'Refund received (cash)',
+                default => 'Refund received (card)',
             };
 
-            $saleReturn = SaleReturn::create([
+            $purchaseReturn = PurchaseReturn::create([
                 'user_id' => $this->ownerUserId($request),
                 'business_id' => $data['business_id'],
-                'sale_id' => $sale?->id,
-                'customer_id' => $customerId,
+                'purchase_id' => $purchase?->id,
+                'supplier_id' => $supplierId,
                 'return_number' => $data['return_number'],
                 'date' => $data['date'],
                 'settlement_mode' => $data['settlement_mode'],
                 'total_amount' => $amount,
-                'note' => 'Sale Return #'.$data['return_number'].($sale ? ' for Sale Bill #'.$sale->bill_number : '').' - '.$modeText,
+                'note' => 'Purchase Return #'.$data['return_number'].($purchase ? ' for Purchase #'.$purchase->purchase_number : '').' - '.$modeText,
             ]);
 
             foreach ($items as $it) {
@@ -295,8 +312,8 @@ class SaleController extends Controller
                     continue;
                 }
 
-                SaleReturnItem::create([
-                    'sale_return_id' => $saleReturn->id,
+                PurchaseReturnItem::create([
+                    'purchase_return_id' => $purchaseReturn->id,
                     'item_id' => $itemId,
                     'name' => $name,
                     'qty' => $qty,
@@ -318,89 +335,89 @@ class SaleController extends Controller
                     continue;
                 }
 
-                $item->current_stock = $item->current_stock + $qty;
+                $item->current_stock = $item->current_stock - $qty;
                 $item->save();
 
                 ItemStockMovement::create([
                     'user_id' => $this->ownerUserId($request),
                     'business_id' => $item->business_id,
                     'item_id' => $item->id,
-                    'sale_id' => $sale?->id,
-                    'sale_bill_number' => $sale?->bill_number,
-                    'type' => 'in',
+                    'purchase_id' => $purchase?->id,
+                    'purchase_number' => $purchase?->purchase_number,
+                    'type' => 'out',
                     'quantity' => $qty,
                     'price' => $price,
                     'date' => $data['date'],
-                    'note' => 'Sale Return #'.$data['return_number'],
+                    'note' => 'Purchase Return #'.$data['return_number'],
                 ]);
             }
 
-            if ($sale) {
-                $newTotal = max(0, (float)$sale->total_amount - $amount);
-                $newReceived = (float)$sale->received_amount;
+            if ($purchase) {
+                $newTotal = max(0, (float)$purchase->total_amount - $amount);
+                $newPaid = (float)$purchase->paid_amount;
                 if (($data['settlement_mode'] ?? '') !== 'credit_party') {
-                    $newReceived = max(0, $newReceived - $amount);
+                    $newPaid = max(0, $newPaid - $amount);
                 }
-                $newBalance = max(0, $newTotal - $newReceived);
+                $newBalance = max(0, $newTotal - $newPaid);
 
-                $sale->update([
+                $purchase->update([
                     'total_amount' => $newTotal,
-                    'received_amount' => $newReceived,
+                    'paid_amount' => $newPaid,
                     'balance_due' => $newBalance,
                     'payment_status' => $newBalance > 0 ? 'unpaid' : 'fully_paid',
                 ]);
             }
 
-            if (!empty($customerId)) {
+            if (!empty($supplierId)) {
                 $createdAt = $this->withTime($data['date']);
-                Transaction::create([
+                SupplierTransaction::create([
                     'user_id' => $this->ownerUserId($request),
                     'business_id' => $data['business_id'],
-                    'customer_id' => $customerId,
+                    'supplier_id' => $supplierId,
                     'amount' => $amount,
-                    'type' => 'DEBIT',
-                    'note' => $saleReturn->note,
+                    'type' => 'CREDIT',
+                    'note' => $purchaseReturn->note,
                     'synced' => true,
                     'created_at' => $createdAt,
                 ]);
             }
 
-            return response()->json($saleReturn->load('items'), 201);
+            return response()->json($purchaseReturn->load('items'), 201);
         });
     }
 
     public function storePayment(Request $request)
     {
-        $this->authorizeFeature($request, 'sale', 'edit');
+        $this->authorizeFeature($request, 'purchase', 'edit');
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
             'payment_number' => ['required', 'integer', 'min:1'],
             'date' => ['required', 'date'],
-            'customer_id' => ['required', 'integer', 'exists:customers,id'],
+            'supplier_id' => ['required', 'integer', 'exists:suppliers,id'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'payment_mode' => ['required', 'string', 'in:cash,card'],
             'note' => ['nullable', 'string'],
-            'sale_ids' => ['nullable', 'array'],
-            'sale_ids.*' => ['integer', 'exists:sales,id'],
+            'purchase_ids' => ['nullable', 'array'],
+            'purchase_ids.*' => ['integer', 'exists:purchases,id'],
         ]);
 
         $this->assertBusinessAccess($request, (int) $data['business_id']);
 
-        $customer = Customer::where('id', $data['customer_id'])
+        $supplier = Supplier::where('id', $data['supplier_id'])
             ->where('user_id', $this->ownerUserId($request))
             ->first();
-        if (!$customer) {
-            return response()->json(['message' => 'Customer not found'], 404);
+        if (!$supplier) {
+            return response()->json(['message' => 'Supplier not found'], 404);
         }
 
         return DB::transaction(function () use ($request, $data) {
             $remaining = (float) $data['amount'];
-            $saleIds = collect($data['sale_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->values();
+            $purchaseIds = collect($data['purchase_ids'] ?? [])->map(fn ($v) => (int) $v)->filter()->values();
 
-            $sales = Sale::where('user_id', $this->ownerUserId($request))
+            $purchases = Purchase::where('user_id', $this->ownerUserId($request))
                 ->where('business_id', $data['business_id'])
-                ->where('customer_id', $data['customer_id'])
-                ->when($saleIds->isNotEmpty(), fn ($q) => $q->whereIn('id', $saleIds->all()))
+                ->where('supplier_id', $data['supplier_id'])
+                ->when($purchaseIds->isNotEmpty(), fn ($q) => $q->whereIn('id', $purchaseIds->all()))
                 ->orderBy('date')
                 ->orderBy('id')
                 ->lockForUpdate()
@@ -409,29 +426,29 @@ class SaleController extends Controller
             $allocations = [];
             $appliedTotal = 0.0;
 
-            foreach ($sales as $sale) {
+            foreach ($purchases as $purchase) {
                 if ($remaining <= 0) {
                     break;
                 }
 
-                $pending = max(0, (float)$sale->total_amount - (float)$sale->received_amount);
+                $pending = max(0, (float)$purchase->total_amount - (float)$purchase->paid_amount);
                 if ($pending <= 0) {
                     continue;
                 }
 
                 $apply = min($pending, $remaining);
-                $newReceived = (float)$sale->received_amount + $apply;
-                $newBalance = max(0, (float)$sale->total_amount - $newReceived);
+                $newPaid = (float)$purchase->paid_amount + $apply;
+                $newBalance = max(0, (float)$purchase->total_amount - $newPaid);
 
-                $sale->update([
-                    'received_amount' => $newReceived,
+                $purchase->update([
+                    'paid_amount' => $newPaid,
                     'balance_due' => $newBalance,
                     'payment_status' => $newBalance > 0 ? 'unpaid' : 'fully_paid',
                 ]);
 
                 $allocations[] = [
-                    'sale_id' => $sale->id,
-                    'bill_number' => $sale->bill_number,
+                    'purchase_id' => $purchase->id,
+                    'purchase_number' => $purchase->purchase_number,
                     'applied_amount' => round($apply, 2),
                 ];
                 $appliedTotal += $apply;
@@ -439,32 +456,32 @@ class SaleController extends Controller
             }
 
             if ($appliedTotal <= 0) {
-                return response()->json(['message' => 'No pending sales found for this payment'], 422);
+                return response()->json(['message' => 'No pending purchases found for this payment'], 422);
             }
 
             $modeText = $data['payment_mode'] === 'card' ? 'Card' : 'Cash';
-            $note = 'Payment In #'.$data['payment_number'].' ('.$modeText.')';
+            $note = 'Payment Out #'.$data['payment_number'].' ('.$modeText.')';
             if (!empty($data['note'])) {
                 $note .= ' - '.trim((string)$data['note']);
             }
 
-            $linkedSaleIds = collect($allocations)
-                ->pluck('sale_id')
+            $linkedPurchaseIds = collect($allocations)
+                ->pluck('purchase_id')
                 ->filter()
                 ->unique()
                 ->values()
                 ->all();
 
             $createdAt = $this->withTime($data['date']);
-            Transaction::create([
+            SupplierTransaction::create([
                 'user_id' => $this->ownerUserId($request),
                 'business_id' => $data['business_id'],
-                'customer_id' => $data['customer_id'],
+                'supplier_id' => $data['supplier_id'],
                 'amount' => $appliedTotal,
-                'type' => 'DEBIT',
+                'type' => 'CREDIT',
                 'payment_number' => $data['payment_number'],
                 'payment_mode' => $data['payment_mode'],
-                'sale_ids' => $linkedSaleIds,
+                'purchase_ids' => $linkedPurchaseIds,
                 'allocations' => $allocations,
                 'note' => $note,
                 'synced' => true,
@@ -481,17 +498,17 @@ class SaleController extends Controller
         });
     }
 
-    public function destroyReturn(Request $request, SaleReturn $saleReturn)
+    public function destroyReturn(Request $request, PurchaseReturn $purchaseReturn)
     {
-        $this->authorizeFeature($request, 'sale', 'edit');
-        if ($saleReturn->user_id !== $this->ownerUserId($request)) {
+        $this->authorizeFeature($request, 'purchase', 'edit');
+        if ($purchaseReturn->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
-        $saleReturn->markDeleted();
-        $saleReturn->items()->withDeleted()->update(['del_status' => 'deleted']);
+        $purchaseReturn->markDeleted();
+        $purchaseReturn->items()->withDeleted()->update(['del_status' => 'deleted']);
 
-        return response()->json(['message' => 'Sale return deleted']);
+        return response()->json(['message' => 'Purchase return deleted']);
     }
 
     private function vatFromGrossAmount(float $grossAmount): float
@@ -509,23 +526,23 @@ class SaleController extends Controller
         return $base->setTimeFrom(Carbon::now())->toDateTimeString();
     }
 
-    public function destroy(Request $request, Sale $sale)
+    public function destroy(Request $request, Purchase $purchase)
     {
-        $this->authorizeFeature($request, 'sale', 'edit');
-        if ($sale->user_id !== $this->ownerUserId($request)) {
+        $this->authorizeFeature($request, 'purchase', 'edit');
+        if ($purchase->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
-        $sale->markDeleted();
-        $sale->items()->withDeleted()->update(['del_status' => 'deleted']);
+        $purchase->markDeleted();
+        $purchase->items()->withDeleted()->update(['del_status' => 'deleted']);
 
-        return response()->json(['message' => 'Sale deleted']);
+        return response()->json(['message' => 'Purchase deleted']);
     }
 
-    public function updatePayment(Request $request, Transaction $transaction)
+    public function updatePayment(Request $request, SupplierTransaction $supplierTransaction)
     {
-        $this->authorizeFeature($request, 'sale', 'edit');
-        if ($transaction->user_id !== $this->ownerUserId($request)) {
+        $this->authorizeFeature($request, 'purchase', 'edit');
+        if ($supplierTransaction->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -533,58 +550,58 @@ class SaleController extends Controller
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
             'payment_number' => ['required', 'integer', 'min:1'],
             'date' => ['required', 'date'],
-            'customer_id' => ['required', 'integer', 'exists:customers,id'],
+            'supplier_id' => ['required', 'integer', 'exists:suppliers,id'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'payment_mode' => ['required', 'string', 'in:cash,card'],
             'note' => ['nullable', 'string'],
-            'sale_ids' => ['nullable', 'array'],
-            'sale_ids.*' => ['integer'],
+            'purchase_ids' => ['nullable', 'array'],
+            'purchase_ids.*' => ['integer'],
         ]);
 
         $this->assertBusinessAccess($request, (int) $data['business_id']);
 
-        $customer = Customer::where('id', $data['customer_id'])
+        $supplier = Supplier::where('id', $data['supplier_id'])
             ->where('user_id', $this->ownerUserId($request))
             ->first();
-        if (!$customer) {
-            return response()->json(['message' => 'Invalid customer'], 422);
+        if (!$supplier) {
+            return response()->json(['message' => 'Invalid supplier'], 422);
         }
 
-        return DB::transaction(function () use ($request, $data, $transaction) {
-            $prevAllocations = collect($transaction->allocations ?? []);
+        return DB::transaction(function () use ($request, $data, $supplierTransaction) {
+            $prevAllocations = collect($supplierTransaction->allocations ?? []);
             foreach ($prevAllocations as $alloc) {
-                $saleId = (int) ($alloc['sale_id'] ?? 0);
+                $purchaseId = (int) ($alloc['purchase_id'] ?? 0);
                 $applied = (float) ($alloc['applied_amount'] ?? 0);
-                if ($saleId <= 0 || $applied <= 0) {
+                if ($purchaseId <= 0 || $applied <= 0) {
                     continue;
                 }
-                $sale = Sale::where('id', $saleId)
+                $purchase = Purchase::where('id', $purchaseId)
                     ->where('user_id', $this->ownerUserId($request))
                     ->where('business_id', $data['business_id'])
                     ->lockForUpdate()
                     ->first();
-                if (!$sale) {
+                if (!$purchase) {
                     continue;
                 }
-                $newReceived = max(0, (float)$sale->received_amount - $applied);
-                $newBalance = max(0, (float)$sale->total_amount - $newReceived);
-                $sale->update([
-                    'received_amount' => $newReceived,
+                $newPaid = max(0, (float)$purchase->paid_amount - $applied);
+                $newBalance = max(0, (float)$purchase->total_amount - $newPaid);
+                $purchase->update([
+                    'paid_amount' => $newPaid,
                     'balance_due' => $newBalance,
                     'payment_status' => $newBalance > 0 ? 'unpaid' : 'fully_paid',
                 ]);
             }
 
             $remaining = (float) $data['amount'];
-            $saleIds = collect($data['sale_ids'] ?? [])
+            $purchaseIds = collect($data['purchase_ids'] ?? [])
                 ->map(fn ($v) => (int) $v)
                 ->filter(fn ($v) => $v > 0)
                 ->values();
 
-            $sales = Sale::where('user_id', $this->ownerUserId($request))
+            $purchases = Purchase::where('user_id', $this->ownerUserId($request))
                 ->where('business_id', $data['business_id'])
-                ->where('customer_id', $data['customer_id'])
-                ->when($saleIds->isNotEmpty(), fn ($q) => $q->whereIn('id', $saleIds->all()))
+                ->where('supplier_id', $data['supplier_id'])
+                ->when($purchaseIds->isNotEmpty(), fn ($q) => $q->whereIn('id', $purchaseIds->all()))
                 ->orderBy('date')
                 ->orderBy('id')
                 ->lockForUpdate()
@@ -593,27 +610,27 @@ class SaleController extends Controller
             $allocations = [];
             $appliedTotal = 0.0;
 
-            foreach ($sales as $sale) {
+            foreach ($purchases as $purchase) {
                 if ($remaining <= 0) {
                     break;
                 }
-                $pending = max(0, (float)$sale->total_amount - (float)$sale->received_amount);
+                $pending = max(0, (float)$purchase->total_amount - (float)$purchase->paid_amount);
                 if ($pending <= 0) {
                     continue;
                 }
                 $apply = min($pending, $remaining);
-                $newReceived = (float)$sale->received_amount + $apply;
-                $newBalance = max(0, (float)$sale->total_amount - $newReceived);
+                $newPaid = (float)$purchase->paid_amount + $apply;
+                $newBalance = max(0, (float)$purchase->total_amount - $newPaid);
 
-                $sale->update([
-                    'received_amount' => $newReceived,
+                $purchase->update([
+                    'paid_amount' => $newPaid,
                     'balance_due' => $newBalance,
                     'payment_status' => $newBalance > 0 ? 'unpaid' : 'fully_paid',
                 ]);
 
                 $allocations[] = [
-                    'sale_id' => $sale->id,
-                    'bill_number' => $sale->bill_number,
+                    'purchase_id' => $purchase->id,
+                    'purchase_number' => $purchase->purchase_number,
                     'applied_amount' => round($apply, 2),
                 ];
                 $appliedTotal += $apply;
@@ -621,29 +638,29 @@ class SaleController extends Controller
             }
 
             if ($appliedTotal <= 0) {
-                return response()->json(['message' => 'No pending sales found for this payment'], 422);
+                return response()->json(['message' => 'No pending purchases found for this payment'], 422);
             }
 
             $modeText = $data['payment_mode'] === 'card' ? 'Card' : 'Cash';
-            $note = 'Payment In #'.$data['payment_number'].' ('.$modeText.')';
+            $note = 'Payment Out #'.$data['payment_number'].' ('.$modeText.')';
             if (!empty($data['note'])) {
                 $note .= ' - '.trim((string)$data['note']);
             }
 
-            $linkedSaleIds = collect($allocations)
-                ->pluck('sale_id')
+            $linkedPurchaseIds = collect($allocations)
+                ->pluck('purchase_id')
                 ->filter()
                 ->unique()
                 ->values()
                 ->all();
 
-            $transaction->update([
+            $supplierTransaction->update([
                 'business_id' => $data['business_id'],
-                'customer_id' => $data['customer_id'],
+                'supplier_id' => $data['supplier_id'],
                 'amount' => $appliedTotal,
                 'payment_number' => $data['payment_number'],
                 'payment_mode' => $data['payment_mode'],
-                'sale_ids' => $linkedSaleIds,
+                'purchase_ids' => $linkedPurchaseIds,
                 'allocations' => $allocations,
                 'note' => $note,
                 'created_at' => $this->withTime($data['date']),

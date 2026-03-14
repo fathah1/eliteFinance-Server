@@ -6,12 +6,12 @@ use App\Models\Concerns\HasDelStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class SaleItem extends Model
+class PurchaseReturnItem extends Model
 {
     use HasFactory, HasDelStatus;
 
     protected $fillable = [
-        'sale_id',
+        'purchase_return_id',
         'item_id',
         'name',
         'qty',
@@ -19,4 +19,9 @@ class SaleItem extends Model
         'line_total',
         'del_status',
     ];
+
+    public function purchaseReturn()
+    {
+        return $this->belongsTo(PurchaseReturn::class);
+    }
 }

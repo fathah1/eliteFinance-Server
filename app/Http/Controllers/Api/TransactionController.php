@@ -5,15 +5,20 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\Transaction;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class TransactionController extends Controller
 {
     public function indexAll(Request $request)
     {
+        $this->authorizeFeature($request, 'parties', 'view');
         $businessId = $request->query('business_id');
+        if ($businessId) {
+            $this->assertBusinessAccess($request, (int) $businessId);
+        }
 
-        return Transaction::where('user_id', $request->user()->id)
+        return Transaction::where('user_id', $this->ownerUserId($request))
             ->when($businessId, fn($q) => $q->where('business_id', $businessId))
             ->orderBy('created_at', 'desc')
             ->get();
@@ -21,7 +26,8 @@ class TransactionController extends Controller
 
     public function index(Request $request, Customer $customer)
     {
-        if ($customer->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'parties', 'view');
+        if ($customer->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -32,6 +38,7 @@ class TransactionController extends Controller
 
     public function store(Request $request)
     {
+        $this->authorizeFeature($request, 'parties', 'add');
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
             'customer_id' => ['required', 'integer', 'exists:customers,id'],
@@ -43,8 +50,10 @@ class TransactionController extends Controller
             'attachment' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:5120'],
         ]);
 
+        $this->assertBusinessAccess($request, (int) $data['business_id']);
+
         $customer = Customer::where('id', $data['customer_id'])
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $this->ownerUserId($request))
             ->first();
 
         if (!$customer) {
@@ -56,8 +65,12 @@ class TransactionController extends Controller
             $attachmentPath = $request->file('attachment')->store('attachments', 'public');
         }
 
+        $createdAt = !empty($data['created_at'])
+            ? Carbon::parse($data['created_at'])->setTimeFrom(Carbon::now())
+            : now();
+
         $transaction = Transaction::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->ownerUserId($request),
             'business_id' => $data['business_id'],
             'customer_id' => $data['customer_id'],
             'amount' => $data['amount'],
@@ -65,7 +78,7 @@ class TransactionController extends Controller
             'note' => $data['note'] ?? null,
             'attachment_path' => $attachmentPath,
             'synced' => $data['synced'] ?? false,
-            'created_at' => $data['created_at'] ?? now(),
+            'created_at' => $createdAt,
         ]);
 
         return response()->json($transaction, 201);
@@ -73,7 +86,8 @@ class TransactionController extends Controller
 
     public function update(Request $request, Transaction $transaction)
     {
-        if ($transaction->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'parties', 'edit');
+        if ($transaction->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -91,13 +105,19 @@ class TransactionController extends Controller
             $attachmentPath = $request->file('attachment')->store('attachments', 'public');
         }
 
+        $updatedCreatedAt = $transaction->created_at;
+        if (!empty($data['created_at'])) {
+            $updatedCreatedAt = Carbon::parse($data['created_at'])
+                ->setTimeFrom(Carbon::now());
+        }
+
         $transaction->update([
             'amount' => $data['amount'],
             'type' => $data['type'],
             'note' => $data['note'] ?? null,
             'attachment_path' => $attachmentPath,
             'synced' => $data['synced'] ?? $transaction->synced,
-            'created_at' => $data['created_at'] ?? $transaction->created_at,
+            'created_at' => $updatedCreatedAt,
         ]);
 
         return response()->json($transaction);
@@ -105,11 +125,12 @@ class TransactionController extends Controller
 
     public function destroy(Request $request, Transaction $transaction)
     {
-        if ($transaction->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'parties', 'edit');
+        if ($transaction->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
-        $transaction->delete();
+        $transaction->markDeleted();
         return response()->json(['message' => 'Deleted']);
     }
 }

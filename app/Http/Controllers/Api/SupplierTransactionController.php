@@ -6,15 +6,20 @@ use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Supplier;
 use App\Models\SupplierTransaction;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class SupplierTransactionController extends Controller
 {
     public function indexAll(Request $request)
     {
+        $this->authorizeFeature($request, 'parties', 'view');
         $businessId = $request->query('business_id');
+        if ($businessId) {
+            $this->assertBusinessAccess($request, (int) $businessId);
+        }
 
-        return SupplierTransaction::where('user_id', $request->user()->id)
+        return SupplierTransaction::where('user_id', $this->ownerUserId($request))
             ->when($businessId, fn($q) => $q->where('business_id', $businessId))
             ->orderBy('created_at', 'desc')
             ->get();
@@ -22,7 +27,8 @@ class SupplierTransactionController extends Controller
 
     public function index(Request $request, Supplier $supplier)
     {
-        if ($supplier->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'parties', 'view');
+        if ($supplier->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -33,6 +39,7 @@ class SupplierTransactionController extends Controller
 
     public function store(Request $request)
     {
+        $this->authorizeFeature($request, 'parties', 'add');
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
             'supplier_id' => ['required', 'integer', 'exists:suppliers,id'],
@@ -44,15 +51,10 @@ class SupplierTransactionController extends Controller
             'attachment' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:5120'],
         ]);
 
-        $business = Business::where('id', $data['business_id'])
-            ->where('user_id', $request->user()->id)
-            ->first();
-        if (!$business) {
-            return response()->json(['message' => 'Not found'], 404);
-        }
+        $this->assertBusinessAccess($request, (int) $data['business_id']);
 
         $supplier = Supplier::where('id', $data['supplier_id'])
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $this->ownerUserId($request))
             ->first();
         if (!$supplier) {
             return response()->json(['message' => 'Not found'], 404);
@@ -63,8 +65,12 @@ class SupplierTransactionController extends Controller
             $attachmentPath = $request->file('attachment')->store('attachments', 'public');
         }
 
+        $createdAt = !empty($data['created_at'])
+            ? Carbon::parse($data['created_at'])->setTimeFrom(Carbon::now())
+            : now();
+
         $transaction = SupplierTransaction::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->ownerUserId($request),
             'business_id' => $data['business_id'],
             'supplier_id' => $data['supplier_id'],
             'amount' => $data['amount'],
@@ -72,7 +78,7 @@ class SupplierTransactionController extends Controller
             'note' => $data['note'] ?? null,
             'attachment_path' => $attachmentPath,
             'synced' => $data['synced'] ?? false,
-            'created_at' => $data['created_at'] ?? now(),
+            'created_at' => $createdAt,
         ]);
 
         return response()->json($transaction, 201);
@@ -80,7 +86,8 @@ class SupplierTransactionController extends Controller
 
     public function update(Request $request, SupplierTransaction $supplierTransaction)
     {
-        if ($supplierTransaction->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'parties', 'edit');
+        if ($supplierTransaction->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
@@ -98,13 +105,19 @@ class SupplierTransactionController extends Controller
             $attachmentPath = $request->file('attachment')->store('attachments', 'public');
         }
 
+        $updatedCreatedAt = $supplierTransaction->created_at;
+        if (!empty($data['created_at'])) {
+            $updatedCreatedAt = Carbon::parse($data['created_at'])
+                ->setTimeFrom(Carbon::now());
+        }
+
         $supplierTransaction->update([
             'amount' => $data['amount'],
             'type' => $data['type'],
             'note' => $data['note'] ?? null,
             'attachment_path' => $attachmentPath,
             'synced' => $data['synced'] ?? $supplierTransaction->synced,
-            'created_at' => $data['created_at'] ?? $supplierTransaction->created_at,
+            'created_at' => $updatedCreatedAt,
         ]);
 
         return response()->json($supplierTransaction);
@@ -112,11 +125,12 @@ class SupplierTransactionController extends Controller
 
     public function destroy(Request $request, SupplierTransaction $supplierTransaction)
     {
-        if ($supplierTransaction->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'parties', 'edit');
+        if ($supplierTransaction->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Not found'], 404);
         }
 
-        $supplierTransaction->delete();
+        $supplierTransaction->markDeleted();
         return response()->json(['message' => 'Deleted']);
     }
 }

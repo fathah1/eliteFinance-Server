@@ -11,10 +11,14 @@ class ItemController extends Controller
 {
     public function index(Request $request)
     {
+        $this->authorizeFeature($request, 'items', 'view');
         $businessId = $request->query('business_id');
+        if ($businessId) {
+            $this->assertBusinessAccess($request, (int) $businessId);
+        }
         $type = $request->query('type');
 
-        return Item::where('user_id', $request->user()->id)
+        return Item::where('user_id', $this->ownerUserId($request))
             ->when($businessId, fn ($q) => $q->where('business_id', $businessId))
             ->when($type, fn ($q) => $q->where('type', $type))
             ->addSelect([
@@ -30,6 +34,7 @@ class ItemController extends Controller
 
     public function store(Request $request)
     {
+        $this->authorizeFeature($request, 'items', 'add');
         $data = $request->validate([
             'business_id' => ['required', 'integer', 'exists:businesses,id'],
             'type' => ['required', 'string', 'in:product,service'],
@@ -43,6 +48,8 @@ class ItemController extends Controller
             'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
         ]);
 
+        $this->assertBusinessAccess($request, (int) $data['business_id']);
+
         $photoPath = null;
         if ($request->hasFile('photo')) {
             $photoPath = $request->file('photo')->store('items', 'public');
@@ -51,7 +58,7 @@ class ItemController extends Controller
         $opening = $data['opening_stock'] ?? 0;
 
         $item = Item::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->ownerUserId($request),
             'business_id' => $data['business_id'],
             'type' => $data['type'],
             'name' => $data['name'],
@@ -70,7 +77,8 @@ class ItemController extends Controller
 
     public function update(Request $request, Item $item)
     {
-        if ($item->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'items', 'edit');
+        if ($item->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
@@ -96,17 +104,19 @@ class ItemController extends Controller
 
     public function destroy(Request $request, Item $item)
     {
-        if ($item->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'items', 'edit');
+        if ($item->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        $item->delete();
+        $item->markDeleted();
         return response()->json(['message' => 'Deleted']);
     }
 
     public function stock(Request $request, Item $item)
     {
-        if ($item->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'items', 'edit');
+        if ($item->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
@@ -118,6 +128,8 @@ class ItemController extends Controller
             'note' => ['nullable', 'string', 'max:500'],
             'sale_id' => ['nullable', 'integer', 'exists:sales,id'],
             'sale_bill_number' => ['nullable', 'integer', 'min:1'],
+            'purchase_id' => ['nullable', 'integer', 'exists:purchases,id'],
+            'purchase_number' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $delta = $data['type'] === 'in' ? $data['quantity'] : -1 * $data['quantity'];
@@ -128,12 +140,14 @@ class ItemController extends Controller
         $item->save();
 
         $movement = ItemStockMovement::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->ownerUserId($request),
             'business_id' => $item->business_id,
             'item_id' => $item->id,
             'type' => $data['type'],
             'sale_id' => $data['sale_id'] ?? null,
             'sale_bill_number' => $data['sale_bill_number'] ?? null,
+            'purchase_id' => $data['purchase_id'] ?? null,
+            'purchase_number' => $data['purchase_number'] ?? null,
             'quantity' => $data['quantity'],
             'price' => $data['price'] ?? 0,
             'date' => $data['date'] ?? now()->toDateString(),
@@ -148,12 +162,13 @@ class ItemController extends Controller
 
     public function movements(Request $request, Item $item)
     {
-        if ($item->user_id !== $request->user()->id) {
+        $this->authorizeFeature($request, 'items', 'view');
+        if ($item->user_id !== $this->ownerUserId($request)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
         return ItemStockMovement::where('item_id', $item->id)
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $this->ownerUserId($request))
             ->orderBy('id', 'desc')
             ->get();
     }

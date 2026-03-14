@@ -5,20 +5,22 @@ namespace App\Models;
 use App\Models\Concerns\HasDelStatus;
 use Illuminate\Database\Eloquent\Model;
 
-class Supplier extends Model
+class CashbookEntry extends Model
 {
-    protected $appends = ['photo_url'];
-
     use HasDelStatus;
+
+    protected $appends = ['photo_url'];
 
     protected $fillable = [
         'user_id',
         'business_id',
-        'name',
-        'phone',
-        'opening_balance',
+        'direction',
+        'amount',
+        'payment_mode',
+        'note',
+        'date',
         'photo_path',
-        'is_archived',
+        'created_at',
         'del_status',
     ];
 
@@ -29,15 +31,5 @@ class Supplier extends Model
         }
 
         return url('storage/app/public/' . ltrim($this->photo_path, '/'));
-    }
-
-    public function business()
-    {
-        return $this->belongsTo(Business::class);
-    }
-
-    public function transactions()
-    {
-        return $this->hasMany(SupplierTransaction::class);
     }
 }

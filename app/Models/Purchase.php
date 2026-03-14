@@ -6,37 +6,16 @@ use App\Models\Concerns\HasDelStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Sale extends Model
+class Purchase extends Model
 {
     protected $appends = ['note_photo_urls'];
 
     use HasFactory, HasDelStatus;
 
     protected $fillable = [
-        'user_id',
-        'business_id',
-        'customer_id',
-        'bill_number',
-        'date',
-        'party_name',
-        'party_phone',
-        'manual_amount',
-        'subtotal',
-        'additional_charges_total',
-        'discount_value',
-        'discount_type',
-        'discount_label',
-        'discount_amount',
-        'total_amount',
-        'vat_amount',
-        'payment_mode',
-        'received_amount',
-        'balance_due',
-        'payment_status',
-        'due_date',
-        'payment_reference',
-        'private_notes',
-        'note_photos',
+        'user_id','business_id','supplier_id','purchase_number','date','party_name','party_phone',
+        'manual_amount','subtotal','additional_charges_total','discount_value','discount_type','discount_label','discount_amount',
+        'total_amount','vat_amount','payment_mode','paid_amount','balance_due','payment_status','due_date','payment_reference','private_notes','note_photos',
         'del_status',
     ];
 
@@ -61,6 +40,6 @@ class Sale extends Model
 
     public function items()
     {
-        return $this->hasMany(SaleItem::class);
+        return $this->hasMany(PurchaseItem::class);
     }
 }

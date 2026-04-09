@@ -19,6 +19,9 @@ class AuthController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:20', 'unique:users,phone'],
             'shop_name' => ['nullable', 'string', 'max:255'],
+            'activation_code' => ['required', 'string', 'max:255'],
+            'account_type' => ['required', 'string', 'in:personal,business'],
+            'outlet_count' => ['nullable', 'integer', 'min:1', 'required_if:account_type,business'],
             'password' => ['required', 'string', 'min:6'],
         ]);
 
@@ -30,6 +33,9 @@ class AuthController extends Controller
             'phone' => $data['phone'] ?? null,
             'email' => null,
             'shop_name' => $data['shop_name'] ?? $data['name'],
+            'activation_code' => $data['activation_code'],
+            'account_type' => $data['account_type'],
+            'outlet_count' => $data['account_type'] === 'business' ? ($data['outlet_count'] ?? 1) : null,
             'password' => Hash::make($data['password']),
         ]);
 

@@ -19,6 +19,9 @@ class User extends Authenticatable
         'email',
         'phone',
         'shop_name',
+        'activation_code',
+        'account_type',
+        'outlet_count',
         'settings',
         'password',
         'pin_code',
@@ -42,6 +45,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'settings' => 'array',
             'is_super_user' => 'boolean',
+            'outlet_count' => 'integer',
         ];
     }
 

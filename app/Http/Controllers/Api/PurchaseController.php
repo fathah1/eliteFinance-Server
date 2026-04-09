@@ -208,13 +208,16 @@ class PurchaseController extends Controller
 
                 if ($paid > 0) {
                     $createdAtPaid = $this->withTime($purchase->date);
+                    $modeText = ($data['payment_mode'] ?? 'cash') === 'card' ? 'Card' : 'Cash';
                     SupplierTransaction::create([
                         'user_id' => $this->ownerUserId($request),
                         'business_id' => $data['business_id'],
                         'supplier_id' => $data['supplier_id'],
                         'amount' => $paid,
                         'type' => 'CREDIT',
-                        'note' => 'Payment Out #'.$purchase->purchase_number,
+                        'payment_number' => $purchase->purchase_number,
+                        'payment_mode' => $data['payment_mode'] ?? 'cash',
+                        'note' => 'Payment Out #'.$purchase->purchase_number.' ('.$modeText.')',
                         'synced' => true,
                         'created_at' => $createdAtPaid,
                     ]);
